@@ -4,7 +4,7 @@ block_cipher = None
 
 
 a = Analysis(['engine.py'],
-             pathex=['d:\\Projects\\Rogue'],
+             pathex=['D:\\Projects\\Rogue'],
              binaries=[],
              datas=[],
              hiddenimports=[],
