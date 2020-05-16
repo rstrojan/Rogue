@@ -1,6 +1,8 @@
 import tcod as libtcod
 from components.fighter import Fighter
+from components.inventory import Inventory
 from game_states import GameStates
+from game_messages import Message, MessageLog
 from input_handlers import handle_keys
 from map_objects.game_map import GameMap
 from entity import Entity, get_blocking_entities_at_location
@@ -18,6 +20,9 @@ def main():
 	bar_width = 20
 	panel_height = 7
 	panel_y = screen_height - panel_height
+	message_x = bar_width + 2
+	message_width = screen_width - bar_width - 2
+	message_height = panel_height - 1
 
 	# These control our map and room params
 	map_width = 80
@@ -31,7 +36,9 @@ def main():
 	fov_light_walls = True
 	fov_radius = 10
 
+	#for our entities
 	max_monsters_per_room = 3
+	max_items_per_room = 2
 
 	colors = {
 		'dark_wall': libtcod.Color(0, 0, 100),
@@ -43,7 +50,9 @@ def main():
 
 	#initialize player and add him to entities list
 	fighter_compenent = Fighter(hp=30, defense=2, power=5)
-	player = Entity(0, 0, '@', libtcod.white, 'Player', blocks=True, render_order=RenderOrder.ACTOR, fighter=fighter_compenent)
+	inventory_component = Inventory(26)
+	player = Entity(0, 0, '@', libtcod.white, 'Player', blocks=True, render_order=RenderOrder.ACTOR, 
+					fighter=fighter_compenent, inventory=inventory_component)
 	entities = [player]
 
 	#set the art to be used
@@ -58,29 +67,37 @@ def main():
 	# initialize a new map object
 	game_map = GameMap(map_width, map_height)
 	# build new map based on everything we've created.
-	game_map.make_map(max_rooms, room_min_size, room_max_size, map_width, map_height, player, entities, max_monsters_per_room)
+	game_map.make_map(max_rooms, room_min_size, room_max_size, map_width, map_height, player, entities, 
+					max_monsters_per_room, max_items_per_room)
 	
 	# bool to store whether we update fov or not
 	fov_recompute = True
 	fov_map = initialize_fov(game_map)
 
+	message_log = MessageLog(message_x, message_width, message_height)
+
 	# key and mouse to capture input
 	key = libtcod.Key()
 	mouse = libtcod.Mouse()
-
+	mouse_pos = 0
 	game_state = GameStates.PLAYERS_TURN
 
 	#game loop that keeps things going
 	while not libtcod.console_is_window_closed():
-		libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS, key, mouse)
+		libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS | libtcod.EVENT_MOUSE, key, mouse)
+
+		# This is will update the mouse when it is moved.
+		if mouse.x != mouse_pos:
+			fov_recompute = True
+			mouse_pos = mouse.x
 
 		#if player doesn't move fov won't update.
 		if fov_recompute:
 			recompute_fov(fov_map, player.x, player.y, fov_radius, fov_light_walls, fov_algorithm)
 
 		#update everything
-		render_all(con, panel, entities, player, game_map, fov_map, fov_recompute, screen_width, screen_height,
-					bar_width, panel_height, panel_y, colors)
+		render_all(con, panel, entities, player, game_map, fov_map, fov_recompute, message_log, screen_width, screen_height,
+					bar_width, panel_height, panel_y, mouse, colors)
 		fov_recompute = False
 
 		libtcod.console_flush()
@@ -90,6 +107,7 @@ def main():
 		action = handle_keys(key)
 
 		move = action.get('move')
+		pickup = action.get('pickup')
 		exit = action.get('exit')
 		fullscreen = action.get('fullscreen')
 
@@ -97,6 +115,7 @@ def main():
 
 		if move and game_state == GameStates.PLAYERS_TURN:
 			dx, dy = move
+			fov_recompute = True
 
 			destination_x = player.x + dx
 			destination_y = player.y + dy
@@ -112,6 +131,15 @@ def main():
 					fov_recompute = True
 				#after player's turn set to enemy turn
 				game_state = GameStates.ENEMY_TURN
+		elif pickup and game_state == GameStates.PLAYERS_TURN:
+			for entity in entities:
+				if entity.item and entity.x == player.x and entity.y == player.y:
+					pickup_results = player.inventory.add_item(entity)
+					player_turn_results.extend(pickup_results)
+
+					break
+			else:
+				message_log.add_message(Message('There is nothing here to pick up.', libtcod.yellow))
 
 		if exit:
 			return True
@@ -122,9 +150,10 @@ def main():
 		for player_turn_result in player_turn_results:
 			message = player_turn_result.get('message')
 			dead_entity = player_turn_result.get('dead')
+			item_added = player_turn_result.get('item_added')
 
 			if message:
-				print(message)
+				message_log.add_message(message)
 			
 			if dead_entity:
 				if dead_entity == player:
@@ -132,7 +161,11 @@ def main():
 				else:
 					message = kill_monster(dead_entity)
 				
-				print(message)
+				message_log.add_message(message)
+			
+			if item_added:
+				entities.remove(item_added)
+				game_state = GameStates.ENEMY_TURN
 		
 		if game_state == GameStates.ENEMY_TURN:
 			for entity in entities:
@@ -145,14 +178,15 @@ def main():
 						dead_entity = enemy_turn_result.get('dead')
 
 						if message:
-							print(message)
+							message_log.add_message(message)
+							
 						if dead_entity:
 							if dead_entity == player:
 								message, game_state = kill_player(dead_entity)
 							else:
 								message = kill_monster(dead_entity)
 							
-							print(message)
+							message_log.add_message(message)
 
 							if game_state == GameStates.PLAYER_DEAD:
 								break
