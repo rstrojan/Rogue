@@ -51,7 +51,7 @@ class Inventory:
 				item_use_results in item_component.use_function(self.owner, **kwargs)
 
 				for item_use_result in item_use_results:
-					if item_use_result.get('consume'):
+					if item_use_result.get('consumed'):
 						self.remove_item(item_entity)
 
 				results.extend(item_use_results)
